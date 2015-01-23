@@ -1,0 +1,324 @@
+<link rel="import" href="../bower_components/core-icons/core-icons.html">
+<link rel="import" href="../bower_components/paper-checkbox/paper-checkbox.html">
+
+<polymer-element name="file-list" vertical layout>
+  <template>
+    <style>
+      :host {
+        display: block;
+      }
+      .list {
+        overflow-y: auto;
+      }
+      paper-checkbox::shadow #ink {
+        top: -3px;
+        left: -3px;
+        width: 24px;
+        height: 24px;
+      }
+      .file-item {
+        height: 24px;
+        text-align: center;
+        color: #1B5E20;
+      }
+      .file-item[is-dir] {
+        color: #006064;
+      }
+      .file-item[is-symbol-link] {
+        color: #B71C1C;
+      }
+      .file-item + .file-item {
+        margin-top: 3px;
+      }
+      .file-attr {
+        height: 100%;
+        line-height: 24px;
+      }
+      .file-attr * {
+        vertical-align: middle;
+      }
+      .file-attr + .file-attr {
+        margin-left: 5px;
+      }
+      .checkbox {
+        width: 32px;
+      }
+      .icon {
+        width: 32px;
+      }
+      .name {
+        text-align: left;
+        padding: 0 5px;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        overflow: hidden;
+      }
+      .type {
+        width: 80px;
+      }
+      .size {
+        width: 100px;
+        padding: 0 5px;
+        text-align: right;
+      }
+      .date {
+        width: 100px;
+      }
+      .list-head .file-attr {
+        background: #eee;
+        text-align: center;
+        cursor: pointer;
+      }
+    </style>
+    <div class="list-head" horizontal layout center>
+      <div class="checkbox file-attr">
+        <paper-checkbox checked?="{{selectAll}}" on-change="{{selectAllAction}}"></paper-checkbox>
+      </div>
+      <div class="icon file-attr">&nbsp;</div>
+      <div class="name file-attr" on-tap="{{sortNameAction}}" flex>
+        <span>File Name</span>
+        <core-icon icon="{{sortOpts | iconFormat('name')}}"></core-icon>
+      </div>
+      <div class="type file-attr" on-tap="{{sortTypeAction}}">
+        <span>Type</span>
+        <core-icon icon="{{sortOpts | iconFormat('type')}}"></core-icon>
+      </div>
+      <div class="size file-attr" on-tap="{{sortSizeAction}}">
+        <span>Size</span>
+        <core-icon icon="{{sortOpts | iconFormat('size')}}"></core-icon>
+      </div>
+      <div class="date file-attr" on-tap="{{sortDateAction}}">
+        <span>Date</span>
+        <core-icon icon="{{sortOpts | iconFormat('date')}}"></core-icon>
+      </div>
+    </div>
+    <div class="list" flex>
+      <template repeat="{{file in _files}}">
+        <div class="file-item" selected?="{{file.selected}}" is-dir?="{{file.isDir}}" is-symbol-link?="{{file.isSymbolLink}}" horizontal layout center>
+          <div class="checkbox file-attr">
+            <paper-checkbox checked?="{{file.selected}}" on-change="{{selectAction}}"></paper-checkbox>
+          </div>
+          <div class="icon file-attr">
+            <core-icon icon="{{file.isDir ? 'folder' : 'description'}}"></core-icon>
+          </div>
+          <div class="name file-attr" flex>
+            <a href="#{{file.path}}" on-tap="{{tapAction}}">{{file.name}}</a>
+          </div>
+          <div class="type file-attr">
+            <span>{{file.type}}</span>
+          </div>
+          <div class="size file-attr">
+            <span>{{file.size | sizeFormat}}</span>
+          </div>
+          <div class="date file-attr">
+            <span>{{file.date | dateFormat}}</span>
+          </div>
+        </div>
+      </template>
+    </div>
+  </template>
+  <script>
+    (function () {
+      function sort(arr, opts) {
+        if (arr.length == 0)
+          return arr;
+        opts = opts.slice();
+        var opt = opts.shift();
+        if (!opt)
+          return arr;
+        opt = opt.split(/\s+/);
+        var prop = opt[0],
+          type = opt[1],
+          asc = opt[2] == 'asc';
+        var g = group(arr, prop);
+        var keys = [];
+        for (var key in g) keys.push(key);
+        if (type == 'string') {
+          keys.sort(function (a, b) {
+            var an = a.toLowerCase();
+            var bn = b.toLowerCase();
+            return an > bn ? 1 : an < bn ? -1 : 0;
+          });
+        } else if (type == 'number') {
+          keys.sort(function (a, b) {
+            return a - b;
+          });
+        } else if (type == 'boolean') {
+          keys.sort(function (a, b) {
+            return (a == 'false' ? 1 : 0) - (b == 'false' ? 1 : 0);
+          });
+        }
+        arr = [];
+        for (var i = 0; i < keys.length; i++) {
+          var key = keys[i];
+          arr = asc ? arr.concat(sort(g[key], opts.slice())) :
+            sort(g[key], opts.slice()).concat(arr);
+        }
+        return arr;
+      }
+
+      function group(arr, prop) {
+        var groups = {};
+        for (var i = 0; i < arr.length; i++) {
+          var key = arr[i][prop];
+          var g = groups[key] || (groups[key] = []);
+          g.push(arr[i]);
+        }
+        return groups;
+      }
+
+      function sortOpts(opts, arr, toggle) {
+        var opts = opts.slice();
+
+        function cmpName(a, b) {
+          for (var i = 0; i < b.length; i++) {
+            if (a[i] != b[i]) return false;
+          }
+          return a[b.length] == ' ';
+        }
+
+        if (toggle) {
+          var shouldToggle = true;
+          for (var i = 0; i < arr.length; i++) {
+            if (opts[i].slice(0, arr[i].length + 1) != arr[i] + ' ') {
+              shouldToggle = false;
+              break;
+            }
+          }
+          if (shouldToggle) {
+            arr = toggle === true ? arr.slice() : toggle.split(/\s+/);
+            for (var i = opts.length - 1; i >= 0; i--) {
+              for (var j = 0; j < arr.length; j++) {
+                if (cmpName(opts[i], arr[j])) {
+                  var arr2 = opts[i].split(/\s+/);
+                  arr2[2] = arr2[2] == 'asc' ? 'desc' : 'asc';
+                  opts[i] = arr2.join(' ');
+                  break;
+                }
+              }
+            }
+            return opts;
+          }
+        }
+        var reorders = [];
+        for (var i = opts.length - 1; i >= 0; i--) {
+          for (var j = 0; j < arr.length; j++) {
+            if (cmpName(opts[i], arr[j])) {
+              reorders[j] = opts.splice(i, 1)[0];
+              break;
+            }
+          }
+        }
+        return reorders.concat(opts);
+      }
+
+      Polymer({
+        publish: {
+          files: null,
+          selected: null
+        },
+        _files: [],
+        sortOpts: ['isDir boolean asc', 'name string asc', 'type string asc', 'size number asc', 'date number asc'],
+        filesChanged: function () {
+          this.selectAll = false;
+          this._files = sort(this.files || [], this.sortOpts);
+        },
+        sortOptsChanged: function () {
+          this._files = sort(this._files, this.sortOpts);
+        },
+        sortNameAction: function (e) {
+          this.soNameAsc = !this.soNameAsc;
+          this.sortOpts = sortOpts(this.sortOpts, ['isDir', 'name'], 'name');
+        },
+        sortTypeAction: function (e) {
+          this.soTypeAsc = !this.soTypeAsc;
+          this.sortOpts = sortOpts(this.sortOpts, ['isDir', 'type'], 'type');
+        },
+        sortSizeAction: function (e) {
+          this.soSizeAsc = !this.soSizeAsc;
+          this.sortOpts = sortOpts(this.sortOpts, ['size'], true);
+        },
+        sortDateAction: function (e) {
+          this.soDateAsc = !this.soDateAsc;
+          this.sortOpts = sortOpts(this.sortOpts, ['date'], true);
+        },
+        selectAction: function (e) {
+          var file = e.target.templateInstance.model.file;
+          this.selectFile(file, e.target.checked);
+        },
+        selectAllAction: function (e) {
+          if (!this._files) return;
+          this.selectAllFiles(e.target.checked);
+        },
+        tapAction: function (e) {
+          var file = e.target.templateInstance.model.file;
+          if (file.isDir) {
+            this.fire('path-change', {
+              path: file.path
+            });
+          } else {
+            this.fire('file-download', {
+              path: file.path
+            });
+          }
+        },
+        nameFormat: function (path) {
+          var i = path.lastIndexOf('/');
+          if (i >= 0)
+            path = path.substring(i + 1);
+          return decodeURIComponent(path);
+        },
+        sizeFormat: function (size) {
+          if (size > 1000000000) {
+            return (size / 1000000000).toFixed(2) + 'GB';
+          }
+          if (size > 1000000) {
+            return (size / 1000000).toFixed(2) + 'MB';
+          }
+          if (size > 1000) {
+            return (size / 1000).toFixed(2) + 'KB';
+          }
+          return size + 'B';
+        },
+        dateFormat: function (date) {
+          var dt = new Date(date);
+          var m = (dt.getMonth() + 1).toString();
+          if (m.length < 2) m = '0' + m;
+          var d = dt.getDate().toString();
+          if (d.length < 2) d = '0' + d;
+          return dt.getFullYear() + '/' + m + '/' + d;
+        },
+        iconFormat: function (opts, name) {
+          var asc;
+          for (var i = 0; i < opts.length; i++) {
+            if (opts[i].slice(0, name.length) == name) {
+              asc = /asc$/.test(opts[i]);
+              break;
+            }
+          }
+          return asc ? 'arrow-drop-down' : 'arrow-drop-up';
+        },
+        selectFile: function (file, sel) {
+          if (file.selected != sel) {
+            file.selected = sel;
+            var selected = this.selected || (this.selected = []);
+            if (sel) {
+              selected.push(file);
+            } else {
+              selected.splice(selected.indexOf(file), 1);
+              this.selectAll = false;
+            }
+          }
+        },
+        selectAllFiles: function (sel) {
+          var files = this.files;
+          for (var i = 0; i < files.length; i++) {
+            files[i].selected = sel;
+          }
+          this.selected = sel ? files.slice() : [];
+          this.selectAll = sel;
+        }
+      });
+    })();
+  </script>
+</polymer-element>

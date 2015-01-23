@@ -1,0 +1,94 @@
+<link rel="import" href="../bower_components/core-icons/core-icons.html">
+<link rel="import" href="../bower_components/core-icons/hardware-icons.html">
+
+<polymer-element name="path-indicator">
+  <template>
+    <style>
+      :host {
+        display: block;
+        color: #fff;
+      }
+      .part {
+        font-size: 0;
+        margin-right: -8px;
+      }
+      .part:after {
+        content: '';
+        display: inline-block;
+        vertical-align: middle;
+        border-style: solid;
+        border-width: 20px 0 20px 10px;
+        border-color: transparent transparent transparent #009688;
+      }
+      .part:before {
+        content: '';
+        display: inline-block;
+        vertical-align: middle;
+        border-style: solid;
+        border-width: 20px 0 20px 10px;
+        border-color: #009688 #009688 #009688 transparent;
+      }
+      .part:first-of-type:before {
+        border: 0;
+      }
+      .part:last-of-type:after {
+        border: 0;
+      }
+      a {
+        display: inline-block;
+        padding: 0 10px;
+        vertical-align: middle;
+        background: #009688;
+        font-size: 19px;
+        line-height: 40px;
+      }
+    </style>
+    <div horizontal layout center>
+      <span class="part">
+          <a href="#/" on-tap="{{tapAction}}">
+            <core-icon icon="hardware:phone-android"></core-icon>
+          </a>
+        </span>
+      <template repeat="{{parts}}">
+        <span class="part">
+            <a href="#{{path}}" on-tap="{{tapAction}}">{{text}}</a>
+          </span>
+      </template>
+      <span class="part" flex horizontal layout>
+          <a flex></a>
+        </span>
+    </div>
+  </template>
+  <script>
+    Polymer({
+      publish: {
+        path: ''
+      },
+      pathChanged: function () {
+        if (this.path) {
+          var arr = this.path.split('/');
+          if (!arr[arr.length - 1]) arr.pop();
+          if (!arr[0]) arr.shift();
+          var p = '/';
+          for (var i = 0; i < arr.length; i++) {
+            arr[i] = {
+              text: arr[i],
+              path: p + arr[i] + '/'
+            };
+            p = arr[i].path;
+          }
+          this.parts = arr;
+        } else {
+          this.parts = [];
+        }
+      },
+      tapAction: function (e) {
+        var m = e.target.templateInstance.model;
+        var path = m == this ? '/' : m.path;
+        this.fire('path-change', {
+          path: path
+        });
+      }
+    });
+  </script>
+</polymer-element>

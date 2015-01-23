@@ -1,0 +1,63 @@
+<link rel="import" href="../bower_components/core-icon/core-icon.html">
+<link rel="import" href="../bower_components/core-toolbar/core-toolbar.html">
+<link rel="import" href="../bower_components/paper-button/paper-button.html">
+
+<polymer-element name="app-toolbar">
+  <template>
+    <style>
+      :host {
+        display: block;
+      }
+      .rotate {
+        transform: rotate(90deg);
+      }
+    </style>
+    <core-toolbar>
+      <paper-button on-tap="{{upAction}}">
+        <core-icon class="rotate" icon="arrow-back"></core-icon>
+        <span>Up</span>
+      </paper-button>
+      <paper-button on-tap="{{downloadAction}}">
+        <core-icon icon="file-download"></core-icon>
+        <span>Download</span>
+      </paper-button>
+      <paper-button on-click="{{uploadAction}}">
+        <core-icon icon="file-upload"></core-icon>
+        <span>Upload</span>
+      </paper-button>
+      <paper-button on-tap="{{deleteAction}}">
+        <core-icon icon="delete"></core-icon>
+        <span>Delete</span>
+      </paper-button>
+      <input id="file" type="file" on-change="{{fileAction}}" hidden>
+    </core-toolbar>
+  </template>
+  <script>
+    Polymer({
+      upAction: function () {
+        this.fire('path-up');
+      },
+      downloadAction: function () {
+        this.fire('file-download', {
+          selected: true
+        });
+      },
+      uploadAction: function () {
+        this.$.file.click();
+      },
+      fileAction: function (e) {
+        var arr = e.target.files;
+        if (arr.length > 0) {
+          this.fire('file-upload', {
+            file: arr[0]
+          });
+        }
+      },
+      deleteAction: function () {
+        this.fire('file-delete', {
+          selected: true
+        });
+      }
+    });
+  </script>
+</polymer-element>

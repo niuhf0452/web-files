@@ -1,0 +1,25 @@
+{
+  "name": "web-files",
+  "version": "0.0.1",
+  "homepage": "https://github.com/niuhf0452/web-files",
+  "authors": [
+    "niuhf0452 <niuhf0452@gmail.com>"
+  ],
+  "description": "html5 file manager client",
+  "main": "index.html",
+  "keywords": [
+    "web-files"
+  ],
+  "license": "MIT",
+  "private": true,
+  "ignore": [
+    "**/.*",
+    "node_modules",
+    "bower_components",
+    "test",
+    "tests"
+  ],
+  "dependencies": {
+    "paper-elements": "polymer/paper-elements#~0.5.2"
+  }
+}

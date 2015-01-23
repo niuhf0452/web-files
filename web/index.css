@@ -1,0 +1,15 @@
+* {
+  box-sizing: border-box;
+}
+body {
+  font-size: 16px;
+  font-family: "RobotoDraft", Helvetica, Arial, sans-serif;
+  color: #263238;
+}
+html /deep/ a {
+  color: inherit;
+  text-decoration: none;
+}
+html /deep/ a:hover {
+  color: #0277BD;
+}

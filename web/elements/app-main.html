@@ -1,0 +1,213 @@
+<link rel="import" href="../bower_components/paper-spinner/paper-spinner.html">
+<link rel="import" href="../bower_components/paper-progress/paper-progress.html">
+<link rel="import" href="app-toolbar.html">
+<link rel="import" href="path-indicator.html">
+<link rel="import" href="file-list.html">
+
+<polymer-element name="app-main" vertical layout>
+  <template>
+    <style>
+      :host {
+        display: block;
+        height: 100%;
+      }
+      .spinner {
+        opacity: 1;
+        visibility: visible;
+        background: rgba(255, 255, 255, 0.3);
+        transition: opacity 300ms ease-in-out, visibility 0;
+      }
+      .spinner[hidden] {
+        opacity: 0;
+        visibility: hidden;
+        transition: opacity 300ms ease-in-out, visibility 300ms linear 300ms;
+      }
+      paper-progress {
+        width: 80%;
+        max-width: 300px;
+      }
+    </style>
+    <app-toolbar></app-toolbar>
+    <path-indicator path="{{path}}"></path-indicator>
+    <file-list files="{{files}}" selected="{{selected}}" flex></file-list>
+    <div class="spinner" fit vertical layout center-center hidden?="{{!loading}}">
+      <paper-spinner active></paper-spinner>
+    </div>
+    <div class="spinner" fit vertical layout center-center hidden?="{{!uploading}}">
+      <div>{{uploadingFile}}</div>
+      <paper-progress max="1" value="{{uploadingProgress}}"></paper-progress>
+    </div>
+    <form id="form" method="POST" action="../download" hidden>
+      <input name="file" type="hidden" value="{{fileToDownload}}">
+    </form>
+  </template>
+  <script>
+    (function () {
+      var requestId = 0;
+
+      function ajax(opts, callback) {
+        var reqId = ++requestId;
+        if (typeof opts == 'string') {
+          opts = {
+            url: opts
+          };
+        }
+        var xhr = new XMLHttpRequest();
+        xhr.open(opts.method || 'GET', opts.url);
+        xhr.send(opts.request ? JSON.stringify(opts.request) : null);
+        xhr.onload = function () {
+          if (xhr.status == 200) {
+            if (reqId == requestId)
+              callback(xhr.response);
+          } else {
+            callback(new Error(xhr.status + ' - ' + xhr.statusText));
+          }
+        };
+        xhr.onerror = function () {
+          callback(new Error('network error'));
+        };
+        xhr.responseType = opts.type || 'json';
+      }
+
+      function upload(opts, callback) {
+        var formData = new FormData();
+        formData.append("targetDir", opts.targetDir);
+        formData.append("file", opts.file);
+        var xhr = new XMLHttpRequest();
+        xhr.open('POST', opts.url);
+        xhr.send(formData);
+        xhr.onload = function () {
+          if (xhr.status == 200) {
+            callback(xhr.response);
+          } else {
+            callback(new Error(xhr.status + ' - ' + xhr.statusText));
+          }
+        };
+        xhr.upload.onprogress = function (e) {
+          if (e.lengthComputable)
+            callback(e.loaded / e.total);
+        };
+        xhr.onerror = function () {
+          callback(new Error('network error'));
+        };
+        xhr.responseType = 'json';
+        return xhr;
+      }
+
+      Polymer({
+        eventDelegates: {
+          'path-change': 'pathChangeAction',
+          'path-up': 'pathUpAction',
+          'file-delete': 'fileDeleteAction',
+          'file-download': 'fileDownloadAction',
+          'file-upload': 'fileUploadAction'
+        },
+        path: '',
+        ready: function () {
+          this.listFiles('~');
+        },
+        pathChangeAction: function (e, detail) {
+          if (detail.path) {
+            this.listFiles(detail.path);
+          } else {
+            this.path = '';
+            this.files = [];
+          }
+        },
+        pathUpAction: function () {
+          if (this.path) {
+            var arr = this.path.split('/');
+            if (!arr.pop()) arr.pop();
+            var path = arr.length > 0 ? arr.join('/') + '/' : '/';
+            this.listFiles(path);
+          }
+        },
+        ajax: function (opts, callback) {
+          var self = this;
+          this.loading = true;
+          ajax(opts, function (resp) {
+            self.loading = false;
+            callback.call(self, resp);
+          });
+        },
+        fileDeleteAction: function () {
+          if (!this.selected || this.selected.length == 0) return;
+          var arr = [];
+          for (var i = 0; i < this.selected.length; i++) {
+            arr.push(this.selected[i].path);
+          }
+          var self = this;
+          this.ajax({
+            url: this.resolvePath('../rm'),
+            method: 'POST',
+            type: 'json',
+            request: arr
+          }, function (resp) {
+            if (resp instanceof Error) {
+              alert(resp);
+            }
+            self.listFiles(self.path);
+          });
+        },
+        fileDownloadAction: function (e, detail) {
+          if (detail.path) {
+            this.$.form.elements['file'].value = JSON.stringify(detail.path);
+            this.$.form.submit();
+          } else if (detail.selected) {
+            if (!this.selected || this.selected.length == 0) return;
+            var arr = [];
+            for (var i = 0; i < this.selected.length; i++) {
+              arr.push(this.selected[i].path);
+            }
+            this.$.form.elements['file'].value = JSON.stringify(arr);
+            this.$.form.submit();
+          }
+        },
+        fileUploadAction: function (e, detail) {
+          this.uploadingFile = detail.file.name;
+          this.uploading = true;
+          this.uploadingProgress = 0;
+          var self = this;
+          upload({
+            url: this.resolvePath('../upload'),
+            file: detail.file,
+            targetDir: this.path
+          }, function (e) {
+            if (e instanceof Error) {
+              alert(e.message);
+              self.uploading = false;
+            } else if (typeof e == 'number') {
+              self.uploadingProgress = e;
+            } else {
+              self.uploading = false;
+              self.listFiles(self.path);
+            }
+          });
+        },
+        listFiles: function (path) {
+          this.ajax({
+            url: this.resolvePath('../ls'),
+            method: 'POST',
+            type: 'json',
+            request: {
+              path: path
+            }
+          }, function (resp) {
+            if (resp instanceof Error) {
+              alert(resp);
+            } else {
+              var path = resp.path;
+              if (!/\/$/.test(path)) path += '/';
+              for (var i = 0; i < resp.files.length; i++) {
+                var f = resp.files[i];
+                f.path = path + f.name;
+              }
+              this.files = resp.files;
+              this.path = path;
+            }
+          });
+        }
+      });
+    })();
+  </script>
+</polymer-element>

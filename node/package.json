@@ -1,0 +1,14 @@
+{
+  "name": "web-files",
+  "main": "main.js",
+  "description": "html5 remote file manager",
+  "version": "0.1.0",
+  "keywords": [
+    "web-files"
+  ],
+  "licenses": "Apache 2.0",
+  "dependencies": {
+    "connect-multiparty": "^1.2.5",
+    "express": "^4.11.0"
+  }
+}
