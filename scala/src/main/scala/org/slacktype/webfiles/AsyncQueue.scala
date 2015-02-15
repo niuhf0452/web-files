@@ -168,59 +168,45 @@ object AsyncQueue {
   }
 
 
-  trait Queue[A, B] extends Enqueue[A] with Dequeue[B] {
+  trait SingleThreadQueue[A, B] extends Enqueue[A] with Dequeue[B] {
     protected def enqueue0(buf: QueueState[A]) = {
-      buf match {
-        case x: QueueItem[A] =>
-          enqueue1(x)
-          if (dequeuePending) {
-            dequeue0()
-          }
-        case x: QueueEnd =>
-          setEndState(x)
-          enqueued()
-      }
+      if (enqueue1(buf))
+        enqueued()
+      if (dequeuePending)
+        dequeue0()
     }
 
     protected def dequeue0() = {
       val buf = dequeue1()
-      if (buf != null && enqueuePending) {
+      if (buf != null)
+        dequeued(buf)
+      if (enqueuePending)
         enqueued()
-      }
     }
 
-    protected def enqueue1(buf: QueueItem[A]): Unit
+    protected def enqueue1(buf: QueueState[A]): Boolean
 
-    protected def dequeue1(): QueueItem[B]
+    protected def dequeue1(): QueueState[B]
   }
 
-  class FlipQueue[A] extends Enqueue[A] with Dequeue[A] {
-    private var buffer: QueueItem[A] = null
+  class FlipQueue[A] extends SingleThreadQueue[A, A] {
+    private var pending: QueueState[A] = null
 
-    protected def enqueue0(buf: QueueState[A]) = {
-      buf match {
-        case x: QueueItem[A] =>
-          if (dequeuePending) {
-            dequeued(x)
-            enqueued()
-          } else {
-            buffer = x
-          }
-        case x: QueueEnd =>
-          setEndState(x)
-          enqueued()
-      }
+    protected def enqueue1(buf: QueueState[A]) = {
+      assert(pending == null)
+      pending = buf
+      false
     }
 
-    protected def dequeue0() = {
-      if (buffer != null) {
-        val x = buffer
-        buffer = null
-        dequeued(x)
-        enqueued()
+    protected def dequeue1() = {
+      if (pending == null)
+        null
+      else {
+        val x = pending
+        pending = null
+        x
       }
     }
-
   }
 
   class BufferedQueue[A](limit: Int) extends Enqueue[A] with Dequeue[A] {
@@ -262,4 +248,5 @@ object AsyncQueue {
   }
 
 }
+
 
