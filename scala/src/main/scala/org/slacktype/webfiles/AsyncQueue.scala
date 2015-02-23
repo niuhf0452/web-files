@@ -27,10 +27,6 @@ trait AsyncEnqueue[A] extends AsyncStated {
 
   def enqueue(buf: QueueState[A])(f: () => Unit): Unit
 
-  @inline final def enqueue(buf: A)(f: () => Unit): Unit = enqueue(QueueItem(buf))(f)
-
-  @inline final def end()(f: () => Unit): Unit = enqueue(QueueFinish)(f)
-
   @inline final def <<(upstream: AsyncDequeue[A]): Unit = upstream >> this
 }
 
@@ -209,41 +205,19 @@ object AsyncQueue {
     }
   }
 
-  class BufferedQueue[A](limit: Int) extends Enqueue[A] with Dequeue[A] {
-    private val buffers = mutable.Queue[QueueItem[A]]()
-    private var fullPending = false
-    private var emptyPending = false
+  class BufferedQueue[A](limit: Int) extends SingleThreadQueue[A, A] {
+    private val buffers = mutable.Queue[QueueState[A]]()
 
-    protected def enqueue0(buf: QueueState[A]) = {
-      buf match {
-        case x: QueueItem[A] =>
-          if (dequeuePending) {
-            dequeued(x)
-            enqueued()
-          } else {
-            buffers.enqueue(x)
-            if (buffers.length <= limit || limit == 0)
-              enqueued()
-            else
-              fullPending = true
-          }
-        case x: QueueEnd =>
-          buffers.clear()
-          setEndState(x)
-          enqueued()
-      }
+    protected def enqueue1(buf: QueueState[A]) = {
+      buffers.enqueue(buf)
+      buffers.length <= limit
     }
 
-    protected def dequeue0() = {
-      if (buffers.nonEmpty) {
-        dequeued(buffers.dequeue())
-        if (fullPending) {
-          fullPending = false
-          enqueued()
-        }
-      } else {
-        emptyPending = true
-      }
+    protected def dequeue1() = {
+      if (buffers.nonEmpty)
+        buffers.dequeue()
+      else
+        null
     }
   }
 
