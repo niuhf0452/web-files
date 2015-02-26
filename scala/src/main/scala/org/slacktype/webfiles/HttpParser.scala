@@ -2,7 +2,6 @@ package org.slacktype.webfiles
 
 import java.nio.charset.Charset
 import scala.concurrent._
-import AsyncQueue._
 
 object HttpParser {
 
