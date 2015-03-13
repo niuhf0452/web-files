@@ -61,9 +61,9 @@ object Tcp {
           this.synchronized {
             hasWakeup = false
           }
-          selector.select()
+          val c = selector.select(5000)
           hasWakeup = true
-          if (running) {
+          if (c > 0 && running) {
             val keys = selector.selectedKeys()
             if (!keys.isEmpty) {
               val itor = keys.iterator()
@@ -99,7 +99,7 @@ object Tcp {
       if (selectionKey.isAcceptable) {
         val socket = serverSocket.accept()
         socket.configureBlocking(false)
-        val conn = new Connection(socket, selector)
+        val conn = new Connection(socket, selector, options)
         Future(callback(conn))
       }
     }
@@ -109,19 +109,24 @@ object Tcp {
     }
   }
 
-  class Connection(socket: SocketChannel, selector: Selector)(implicit executor: ExecutionContext) extends TcpConnection with Selectable with Stream.Stream1[ByteBuffer] {
+  class Connection(socket: SocketChannel, selector: Selector, options: Options)(implicit executor: ExecutionContext) extends TcpConnection with Selectable with Stream.Stream1[ByteBuffer] {
     private val selectionKey = selector.register(socket, this)
     private var output: Stream[ByteBuffer] = _
     private var writeBuffer: java.nio.ByteBuffer = _
     private var inputClosed = false
     private var outputClosed = false
-    private val readBuffer = java.nio.ByteBuffer.allocate(1024 * 16)
+    private val readBuffer = java.nio.ByteBuffer.allocate(options.inputBufferLength)
 
-    override protected def read0() = {
+    def remoteAddress = socket.getRemoteAddress
+
+    def localAddress = socket.getLocalAddress
+
+    def input = this
+
+    override protected def read() = {
       if (socket.read(readBuffer) == -1) {
         shutdownInput()
-        readEnd = true
-        completeRead(null)
+        completeRead()
       } else {
         readBuffer.flip()
         val buf =
@@ -140,26 +145,9 @@ object Tcp {
       }
     }
 
-    def remoteAddress = socket.getRemoteAddress
-
-    def localAddress = socket.getLocalAddress
-
-    def input = this
-
-    def setOutput(out: Stream[ByteBuffer]) = {
-      require(output == null)
-      output = out
-      out.read(new StreamReader[ByteBuffer] {
-        def onError(ex: Throwable) = shutdownOutput()
-
-        def onEnd() = shutdownOutput()
-
-        def onBuffer(buf: ByteBuffer) = {
-          writeBuffer = buf.toJavaByteBuffer
-          write()
-        }
-      })
-      out.resume()
+    override def cancel(ex: Throwable) = {
+      shutdownInput()
+      super.cancel(ex)
     }
 
     private def write() = {
@@ -175,10 +163,29 @@ object Tcp {
       }
     }
 
+    def setOutput(out: Stream[ByteBuffer]) = {
+      require(output == null)
+      output = out
+      out.read(new StreamReader[ByteBuffer] {
+        def onError(ex: Throwable) = {
+          shutdownOutput()
+          writeBuffer = null
+        }
+
+        def onEnd() = shutdownOutput()
+
+        def onBuffer(buf: ByteBuffer) = {
+          writeBuffer = buf.toJavaByteBuffer
+          write()
+        }
+      })
+      out.resume()
+    }
+
     def onSelection() = {
       if (selectionKey.isReadable) {
         selectionKey.interestOps(selectionKey.interestOps() & ~SelectionKey.OP_READ)
-        input.read0()
+        read()
       }
       if (selectionKey.isWritable) {
         selectionKey.interestOps(selectionKey.interestOps() & ~SelectionKey.OP_WRITE)
@@ -188,24 +195,24 @@ object Tcp {
 
     private def shutdownInput() = {
       socket.shutdownInput()
-      this.synchronized {
-        inputClosed = true
-        if (outputClosed)
-          socket.close()
-      }
+      inputClosed = true
+      if (outputClosed)
+        close0()
     }
 
     private def shutdownOutput() = {
       socket.shutdownOutput()
-      this.synchronized {
-        outputClosed = true
-        if (inputClosed)
-          socket.close()
-      }
+      outputClosed = true
+      if (inputClosed)
+        close0()
+    }
+
+    private def close0() = {
+      selectionKey.cancel()
+      socket.close()
     }
 
     def close() = {
-      selectionKey.cancel()
       if (!inputClosed) {
         socket.shutdownInput()
         inputClosed = true
@@ -214,7 +221,7 @@ object Tcp {
         socket.shutdownOutput()
         outputClosed = true
       }
-      socket.close()
+      close0()
     }
   }
 

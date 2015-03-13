@@ -24,11 +24,16 @@ trait Stream[A] {
   def filter(f: A => Boolean)(implicit executor: ExecutionContext): Stream[A] = {
     new Stream.Filtered(this, f)
   }
+
+  def >>[B](processor: Stream.Processor[A, B])(implicit executor: ExecutionContext) = {
+    processor << this
+    processor
+  }
 }
 
 class UserCancelledException extends Exception
 
-trait StreamReader[A] {
+trait StreamReader[-A] {
   def onBuffer(buf: A): Unit
 
   def onEnd(): Unit
@@ -41,6 +46,18 @@ object Stream {
   import scala.concurrent._
   import scala.util.control._
 
+  def handleError[A](f: Throwable => Unit) = {
+    new EmptyReader[A] {
+      override def onError(ex: Throwable) = f(ex)
+    }
+  }
+
+  def handleEnd[A](f: => Unit) = {
+    new EmptyReader[A] {
+      override def onEnd() = f
+    }
+  }
+
   trait EmptyReader[A] extends StreamReader[A] {
     def onBuffer(buf: A) = ()
 
@@ -50,115 +67,136 @@ object Stream {
   }
 
   trait Stream0[A] extends Stream[A] {
-    private var readers = Map.empty[StreamReader[A], ReaderWrap[A]]
+    private val readers = scala.collection.concurrent.TrieMap.empty[StreamReader[A], ReaderWrap[A]]
 
-    def read(r: StreamReader[A])(implicit e: ExecutionContext) = this.synchronized {
-      readers += r -> new ReaderWrap(r)
+    def read(r: StreamReader[A])(implicit e: ExecutionContext) = {
+      readers.put(r, new ReaderWrap(r))
     }
 
-    def unread(r: StreamReader[A]) = this.synchronized {
-      readers -= r
+    def unread(r: StreamReader[A]) = {
+      readers.remove(r) match {
+        case Some(x) => x.dispose()
+        case None =>
+      }
     }
 
     protected def notifyError(ex: Throwable) = {
-      readers.values foreach (_.onError(ex))
+      readers foreach (_._2.onError(ex))
     }
 
     protected def notifyEnd() = {
-      readers.values foreach (_.onEnd())
+      readers foreach (_._2.onEnd())
     }
 
     protected def notifyBuffer(buf: A) = {
-      readers.values foreach (_.onBuffer(buf))
+      readers foreach (_._2.onBuffer(buf))
     }
   }
 
   trait Stream1[A] extends Stream0[A] {
-    var pending = false
-    protected var readEnd = false
-    private var cancelException: Option[Throwable] = None
+    private var pending0 = false
+    private var isEnd = false
 
-    def cancel(ex: Throwable) = this.synchronized {
-      if (cancelException.isEmpty)
-        cancelException = Some(ex)
+    def pending = pending0
+
+    def cancel(ex: Throwable) = {
+      assert(!pending0 && !isEnd)
+      pending0 = true
+      completeRead(ex)
     }
 
-    def resume() = this.synchronized {
-      if (!readEnd && !pending) {
-        cancelException match {
-          case Some(ex) =>
-            readEnd = true
-            notifyError(ex)
-          case None =>
-            try {
-              pending = true
-              read0()
-            } catch {
-              case NonFatal(ex) =>
-                cancel(ex)
-                completeRead(null.asInstanceOf[A])
-            }
+    def resume() = {
+      assert(!pending0 && !isEnd)
+      try {
+        pending0 = true
+        read()
+      } catch {
+        case NonFatal(ex) =>
+          completeRead(ex)
+      }
+    }
+
+    protected def completeRead(buf: A): Unit = {
+      assert(pending0)
+      pending0 = false
+      notifyBuffer(buf)
+    }
+
+    protected def completeRead(): Unit = {
+      assert(pending0)
+      pending0 = false
+      isEnd = true
+      notifyEnd()
+    }
+
+    protected def completeRead(ex: Throwable): Unit = {
+      assert(pending0)
+      pending0 = false
+      isEnd = true
+      notifyError(ex)
+    }
+
+    protected def read(): Unit
+  }
+
+  private class ReaderWrap[A](val reader: StreamReader[A])(implicit executor: ExecutionContext) {
+
+    import java.util.concurrent.atomic.AtomicReference
+    import scala.collection.immutable
+
+    private val ref = new AtomicReference[immutable.Queue[() => Unit]](null)
+
+    private def pipe(f: () => Unit) = {
+      var origin: immutable.Queue[() => Unit] = null
+      var q: immutable.Queue[() => Unit] = null
+      do {
+        origin = ref.get()
+        q = if (origin == null) immutable.Queue(f) else origin.enqueue(f)
+      } while (!ref.compareAndSet(origin, q))
+      if (origin == null)
+        Future(process())
+    }
+
+    private def process() = {
+      var run = true
+      while (run) {
+        val q = ref.get()
+        if (q.isEmpty) {
+          if (ref.compareAndSet(q, null))
+            run = false
+        } else {
+          val (f, q0) = q.dequeue
+          if (ref.compareAndSet(q, q0))
+            f()
         }
       }
     }
 
-    protected def completeRead(buf: A): Unit = this.synchronized {
-      assert(pending)
-      pending = false
-      cancelException match {
-        case Some(ex) =>
-          readEnd = true
-          notifyError(ex)
-        case None =>
-          if (readEnd)
-            notifyEnd()
-          else
-            notifyBuffer(buf)
-      }
+    def dispose() = {
+      ref.set(null)
     }
 
-    protected def read0(): Unit
-  }
-
-  private class ReaderWrap[A](val reader: StreamReader[A])(implicit executor: ExecutionContext) {
-    private var last = Future.successful(())
-
     def onError(ex: Throwable) = {
-      last = last.andThen {
-        case _ => reader.onError(ex)
-      }
+      pipe(() => reader.onError(ex))
     }
 
     def onEnd() = {
-      last = last.andThen {
-        case _ => reader.onEnd()
-      }
+      pipe(() => reader.onEnd())
     }
 
     def onBuffer(buf: A) = {
-      last = last.andThen {
-        case _ => reader.onBuffer(buf)
-      }
+      pipe(() => reader.onBuffer(buf))
     }
   }
 
   class Mapped[A, B](origin: Stream[A], f: A => B)(implicit executor: ExecutionContext) extends StreamReader[A] with Stream0[B] {
     origin.read(this)
 
-    def onBuffer(buf: A) = {
-      val x = f(buf)
-      this.synchronized {
-        notifyBuffer(x)
-      }
-    }
+    def onBuffer(buf: A) = notifyBuffer(f(buf))
 
-    def onEnd() = this.synchronized {
-      notifyEnd()
-    }
+    def onEnd() = notifyEnd()
 
-    def onError(ex: Throwable) = this.synchronized {
-      notifyError(ex)
-    }
+    def onError(ex: Throwable) = notifyError(ex)
 
     def pending = origin.pending
 
@@ -175,20 +213,14 @@ object Stream {
 
     def onBuffer(buf: A) = {
       if (f(buf)) {
-        this.synchronized {
-          notifyBuffer(buf)
-        }
+        notifyBuffer(buf)
       } else
         origin.resume()
     }
 
-    def onEnd() = this.synchronized {
-      notifyEnd()
-    }
+    def onEnd() = notifyEnd()
 
-    def onError(ex: Throwable) = this.synchronized {
-      notifyError(ex)
-    }
+    def onError(ex: Throwable) = notifyError(ex)
 
     def pending = origin.pending
 
@@ -198,6 +230,139 @@ object Stream {
 
     override def filter(f0: A => Boolean)(implicit executor: ExecutionContext): Stream[A] =
       origin.filter(x => f(x) && f0(x))(executor)
+  }
+
+  trait Processor[A, B] extends StreamReader[A] with Stream[B] {
+    def upstream: Stream[A]
+
+    def <<(upstream: Stream[A])(implicit executor: ExecutionContext): Unit
+
+    def unbind(): Unit
+  }
+
+  trait Processor0[A, B] extends Processor[A, B] with Stream1[B] {
+    private var input: Stream[A] = _
+
+    protected def process(buf: A): Unit
+
+    protected def processEnd(): Unit
+
+    def upstream = input
+
+    def <<(upstream: Stream[A])(implicit executor: ExecutionContext) = {
+      require(input == null)
+      input = upstream
+      upstream.read(this)
+    }
+
+    def unbind() = {
+      input.unread(this)
+      input = null
+    }
+
+    override def cancel(ex: Throwable) = {
+      input.cancel(ex)
+    }
+
+    def onBuffer(buf: A) = {
+      try {
+        process(buf)
+      } catch {
+        case NonFatal(ex) =>
+          cancel(ex)
+      }
+    }
+
+    def onEnd() = {
+      try {
+        processEnd()
+      } catch {
+        case NonFatal(ex) =>
+          onError(ex)
+      }
+    }
+
+    def onError(ex: Throwable) = {
+      completeRead(ex)
+    }
+  }
+
+  trait Processor1[A, B] extends Processor0[A, B] {
+
+    import scala.collection.mutable
+
+    protected val outputs = mutable.Queue[B]()
+    private var inputEnd = false
+
+    protected def process0(buf: A): Unit
+
+    protected def processEnd0(): Unit
+
+    protected def process(buf: A) = {
+      process0(buf)
+      read()
+    }
+
+    protected def processEnd() = {
+      inputEnd = true
+      processEnd0()
+      read()
+    }
+
+    override def completeRead(ex: Throwable) = {
+      super.completeRead(ex)
+      outputs.clear()
+    }
+
+    override protected def read() = {
+      if (outputs.nonEmpty)
+        completeRead(outputs.dequeue())
+      else if (inputEnd) {
+        completeRead()
+      } else
+        upstream.resume()
+    }
+  }
+
+  trait Slicer[A] extends Processor[A, A] with Stream0[A] {
+    private var input: Stream[A] = _
+    private var end = false
+
+    protected def isEnd(buf: A): Boolean
+
+    def <<(upstream: Stream[A])(implicit executor: ExecutionContext) = {
+      require(input == null)
+      input = upstream
+      upstream.read(this)
+    }
+
+    def onBuffer(buf: A) = {
+      if (isEnd(buf)) {
+        end = true
+        input.unread(this)
+        notifyEnd()
+      } else
+        notifyBuffer(buf)
+    }
+
+    def onEnd() = notifyEnd()
+
+    def onError(ex: Throwable) = notifyError(ex)
+
+    def pending = {
+      require(!end)
+      input.pending
+    }
+
+    def resume() = {
+      require(!end)
+      input.resume()
+    }
+
+    def cancel(ex: Throwable) = {
+      require(!end)
+      input.cancel(ex)
+    }
   }
 
 }

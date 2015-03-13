@@ -49,19 +49,27 @@ object HttpParser {
 
   case object NotEnoughData extends Exception with scala.util.control.NoStackTrace
 
+  case class Header(name: String, content: String)
+
   sealed trait Event
 
-  case class RequestStart(method: String, url: String, headers: List[HttpHeader]) extends Event
+  sealed trait MessageStart extends Event
 
-  case object RequestEnd extends Event
+  sealed trait MessageEnd extends Event
 
-  case class ResponseStart(statusCode: Int, statusText: String, headers: List[HttpHeader]) extends Event
+  sealed trait MessageData extends Event
 
-  case object ResponseEnd extends Event
+  case class RequestStart(method: String, url: String, headers: List[(String, String)]) extends MessageStart
 
-  case class EntityData(buf: ByteBuffer) extends Event
+  case object RequestEnd extends MessageEnd
 
-  case class Failed(ex: Throwable) extends Event
+  case class ResponseStart(statusCode: Int, statusText: String, headers: List[(String, String)]) extends MessageStart
+
+  case object ResponseEnd extends MessageEnd
+
+  case class EntityData(buf: ByteBuffer) extends MessageData
+
+  class ParserException(message: String) extends Exception(message)
 
 }
 
@@ -75,7 +83,7 @@ trait HttpParser {
   protected var method: String = _
   protected var statusCode: Int = _
   protected var statusText: String = _
-  protected var headers: List[HttpHeader] = Nil
+  protected var headers: List[(String, String)] = Nil
   protected var expectLength = 0
   protected var buffer: ByteBuffer = ByteBuffer.empty
   protected var offset: Int = 0
@@ -83,7 +91,7 @@ trait HttpParser {
 
   protected def getHeader(name: String) = {
     val name_ = name.toLowerCase
-    headers.find(_.name.toLowerCase == name_).map(_.content)
+    headers.find(_._1.toLowerCase == name_).map(_._2)
   }
 
   protected def readLine(maxLength: Int) = {
@@ -108,8 +116,8 @@ trait HttpParser {
   def processEnd() = {
     if (state == identity) {
       state = messageEnd()
-    } else {
-      resolve(Failed(new ParserException("unexpected end")))
+    } else if (state != messageStart || buffer.length > 0) {
+      throw new ParserException("unexpected end")
     }
   }
 
@@ -165,13 +173,12 @@ trait HttpParser {
           headers = headers.reverse
           next
         case HeaderLine(name, content) =>
-          headers = HttpHeader(name, content) :: headers
+          headers = (name, content) :: headers
           this
         case HeaderValueLine(content) =>
           headers.headOption match {
             case Some(x) =>
-              val header = HttpHeader(x.name, x.content + content)
-              headers = header :: headers.tail
+              headers = (x._1, x._2 + content) :: headers.tail
               this
             case None => throw new ParserException("invalid header")
           }
@@ -262,33 +269,4 @@ trait HttpParser {
   }
 
   protected def resolve(e: Event): Unit
-}
-
-class ParserException(message: String) extends Exception(message)
-
-class HttpDecoder(input: Stream[ByteBuffer], parserOptions: HttpParser.Options)(implicit executor: ExecutionContext) extends StreamReader[ByteBuffer] with Stream.Stream1[HttpParser.Event] {
-  input.read(this)
-
-  private val events = scala.collection.mutable.Queue[HttpParser.Event]()
-
-  private val parser = new HttpParser {
-    def options = parserOptions
-
-    protected def resolve(e: Event) = {
-      events.enqueue(e)
-    }
-  }
-
-  def onBuffer(buf: ByteBuffer) = {
-  }
-
-  def onEnd() = {
-
-  }
-
-  def onError(ex: Throwable) = this.synchronized {
-  }
-
-  override protected def read0() = {
-  }
 }
