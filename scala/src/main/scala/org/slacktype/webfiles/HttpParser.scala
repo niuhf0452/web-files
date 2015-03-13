@@ -1,6 +1,8 @@
 package org.slacktype.webfiles
 
 import java.nio.charset.Charset
+import org.slacktype.webfiles.HttpParser.{Options, Event}
+
 import scala.concurrent._
 
 object HttpParser {
@@ -145,10 +147,15 @@ trait HttpParser {
     }
   }
 
+  protected val messageEnd: ParserState = new ParserState {
+    override def apply() = {
+      resolve(if (options.response) ResponseEnd else RequestEnd)
+      messageStart
+    }
+  }
+
   private val HeaderLine = """^([A-Z\-]+)\s*:\s*(.*)$""".r
   private val HeaderValueLine = """^\s+(.+)$""".r
-
-  protected val messageHeaders = parseHeaders(entityStart)
 
   protected def parseHeaders(next: ParserState): ParserState = new ParserState {
     override def apply() = {
@@ -194,7 +201,7 @@ trait HttpParser {
     }
   }
 
-  protected val lengthFixed: ParserState = expectContent(messageEnd)
+  protected val messageHeaders = parseHeaders(entityStart)
 
   protected def expectContent(next: ParserState): ParserState = new ParserState {
     override def apply() = {
@@ -209,6 +216,8 @@ trait HttpParser {
       next
     }
   }
+
+  protected val lengthFixed: ParserState = expectContent(messageEnd)
 
   private val ChunkHead = "^([0-9]+)(;.*)?$".r
 
@@ -227,8 +236,6 @@ trait HttpParser {
     }
   }
 
-  protected val chunkData: ParserState = expectContent(chunkEnd)
-
   protected val chunkEnd: ParserState = new ParserState {
     override def apply() = {
       if (buffer(offset) != 0x0d || buffer(offset + 1) != 0x0a)
@@ -236,6 +243,8 @@ trait HttpParser {
       chunkStart
     }
   }
+
+  protected val chunkData: ParserState = expectContent(chunkEnd)
 
   protected val chunkTrailer: ParserState = parseHeaders(messageEnd)
 
@@ -252,52 +261,34 @@ trait HttpParser {
     }
   }
 
-  protected val messageEnd: ParserState = new ParserState {
-    override def apply() = {
-      resolve(if (options.response) ResponseEnd else RequestEnd)
-      messageStart
-    }
-  }
-
   protected def resolve(e: Event): Unit
 }
 
 class ParserException(message: String) extends Exception(message)
 
-class HttpDecoder(options0: HttpParser.Options)(implicit executor: ExecutionContext) extends Enqueue[ByteBuffer] with Dequeue[HttpParser.Event] {
-  private val queue = scala.collection.mutable.Queue[HttpParser.Event]()
+class HttpDecoder(input: Stream[ByteBuffer], parserOptions: HttpParser.Options)(implicit executor: ExecutionContext) extends StreamReader[ByteBuffer] with Stream.Stream1[HttpParser.Event] {
+  input.read(this)
+
+  private val events = scala.collection.mutable.Queue[HttpParser.Event]()
+
   private val parser = new HttpParser {
-    def options = options0
+    def options = parserOptions
 
-    protected def resolve(e: HttpParser.Event) = {
-      queue.enqueue(e)
+    protected def resolve(e: Event) = {
+      events.enqueue(e)
     }
   }
 
-
-  protected def enqueue0(buf: QueueState[ByteBuffer]) = {
-    buf match {
-      case x: QueueError =>
-        parser.processEnd()
-        queue.clear()
-        setEndState(x)
-        dequeued(x)
-      case QueueItem(x) =>
-        parser.process(x)
-        if (dequeuePending)
-          dequeue0()
-      case QueueFinish =>
-        parser.processEnd()
-        if (dequeuePending)
-          dequeue0()
-    }
+  def onBuffer(buf: ByteBuffer) = {
   }
 
-  protected def dequeue0() = {
-    if (queue.nonEmpty) {
-      dequeued(QueueItem(queue.dequeue()))
-    } else {
-      enqueued()
-    }
+  def onEnd() = {
+
+  }
+
+  def onError(ex: Throwable) = this.synchronized {
+  }
+
+  override protected def read0() = {
   }
 }
