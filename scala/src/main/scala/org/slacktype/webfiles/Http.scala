@@ -67,7 +67,10 @@ object Http {
     def predefined(code: Int) = codes.get(code)
   }
 
-  class EventParser(parserOptions: HttpParser.Options) extends Stream.Processor1[ByteBuffer, HttpParser.Event] {
+  class EventParser(parserOptions: HttpParser.Options)
+    extends Stream.QueueBasedProcessor[ByteBuffer, HttpParser.Event]
+    with Stream.SingleReaderDispatch[HttpParser.Event] {
+
     private val parser = new HttpParser {
       def options = parserOptions
 
@@ -85,7 +88,11 @@ object Http {
     }
   }
 
-  sealed trait MessageParser[M >: Null] extends Stream.Processor0[HttpParser.Event, M] {
+  sealed trait MessageParser[M >: Null]
+    extends Stream.AbstractProcessor[HttpParser.Event, M]
+    with Stream.SingleSourced[HttpParser.Event]
+    with Stream.SingleReaderDispatch[M] {
+
     private var message: MessageBase with M = _
 
     protected def newMessage(e: HttpParser.MessageStart): MessageBase with M
@@ -120,7 +127,12 @@ object Http {
       super.resume()
     }
 
-    trait MessageBase extends Message with StreamReader[ByteBuffer] with Stream.Stream1[ByteBuffer] {
+    trait MessageBase
+      extends Message
+      with Stream.Reader[ByteBuffer]
+      with Stream.AbstractStream[ByteBuffer]
+      with Stream.SingleReaderDispatch[ByteBuffer] {
+
       def body = this
 
       protected def read() = upstream.resume()
@@ -147,7 +159,11 @@ object Http {
 
   }
 
-  class RequestHandler(pipelineLimit: Int, f: ServerContext => Unit)(implicit executor: ExecutionContext) extends Stream.Processor0[Request, Response] {
+  class RequestHandler(pipelineLimit: Int, f: ServerContext => Unit)(implicit executor: ExecutionContext)
+    extends Stream.AbstractProcessor[Request, Response]
+    with Stream.SingleSourced[Request]
+    with Stream.SingleReaderDispatch[Response] {
+
     private val pipeline = scala.collection.mutable.Queue[Context]()
     private var waiting = false
     private var end = false
@@ -221,17 +237,16 @@ object Http {
 
   }
 
-  class ResponseWriter extends Stream.Processor0[Response, ByteBuffer] {
-    protected def process(resp: Response) = {
-    }
+  class ResponseWriter
+    extends Stream.AbstractProcessor[Response, ByteBuffer]
+    with Stream.SingleSourced[Response]
+    with Stream.SingleReaderDispatch[ByteBuffer] {
 
-    protected def processEnd() = {
-
-    }
-
-    protected def read() = {
-    }
+    protected def process(resp:Response)= {}
+    protected def processEnd() = {}
+    protected def read() = {}
   }
+
 
   class ResponseParser extends MessageParser[Response] {
     protected def newMessage(e: HttpParser.MessageStart) = {

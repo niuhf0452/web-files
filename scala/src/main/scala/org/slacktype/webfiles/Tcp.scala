@@ -109,7 +109,7 @@ object Tcp {
     }
   }
 
-  class Connection(socket: SocketChannel, selector: Selector, options: Options)(implicit executor: ExecutionContext) extends TcpConnection with Selectable with Stream.Stream1[ByteBuffer] {
+  class Connection(socket: SocketChannel, selector: Selector, options: Options)(implicit executor: ExecutionContext) extends TcpConnection with Selectable with Stream.AbstractStream[ByteBuffer] {
     private val selectionKey = selector.register(socket, this)
     private var output: Stream[ByteBuffer] = _
     private var writeBuffer: java.nio.ByteBuffer = _
@@ -166,7 +166,7 @@ object Tcp {
     def setOutput(out: Stream[ByteBuffer]) = {
       require(output == null)
       output = out
-      out.read(new StreamReader[ByteBuffer] {
+      out.read(new Stream.Reader[ByteBuffer] {
         def onError(ex: Throwable) = {
           shutdownOutput()
           writeBuffer = null

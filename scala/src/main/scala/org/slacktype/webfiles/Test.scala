@@ -1,6 +1,6 @@
 package org.slacktype.webfiles
 
-import org.slacktype.webfiles.Stream.Stream1
+import org.slacktype.webfiles.Stream.AbstractStream
 
 object Test {
 
